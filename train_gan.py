@@ -8,7 +8,11 @@ import logging
 #TARGET_WIDTH = 128
 #TARGET_HEIGH = 192
 TARGET_WIDTH = 64
-TARGET_HEIGH = 64
+TARGET_HEIGHT = 64
+NUM_UPSCALING_BLOCKS = 2
+GENERATOR_RES_BLOCK_NUM_CHANNELS = 64
+UPSCALING_BLOCK_NUM_CHANNELS = 256
+NUM_RES_BLOCKS = 16
 
 NOISE_SIZE = 128
 TRUE_IMAGES_BATCH_SIZE = 64
@@ -44,7 +48,8 @@ class Generator(object):
         initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
       tf.add_to_collection(GENERATOR_PARAMS, w)
       tf.add_to_collection(GENERATOR_PARAMS, b)
-      dense_normalized = add_batch_normalization(tf.matmul(prev_layer_out, w) + b)
+      dense_normalized = add_batch_normalization(
+          tf.matmul(prev_layer_out, w) + b)
       return tf.nn.relu(dense_normalized)
 
   def _build_output_layer(self, prev_layer_out):
@@ -52,77 +57,176 @@ class Generator(object):
       prev_layer_num_channels = int(prev_layer_out.shape[-1])
       kernels = tf.get_variable(
          'kernels',
-         shape=(3, 3, prev_layer_num_channels, 3),
+         shape=(9, 9, prev_layer_num_channels, 3),
          initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
       tf.add_to_collection(GENERATOR_PARAMS, kernels)
       conv_out = tf.nn.conv2d(
          prev_layer_out,
          kernels,
-         strides=[1,1,1,1],
+         strides=[1, 1, 1, 1],
          padding='SAME')
-      assert conv_out.shape.as_list()[1:] == [TARGET_HEIGH, TARGET_WIDTH, 3]
+      assert conv_out.shape.as_list()[1:] == [TARGET_HEIGHT, TARGET_WIDTH, 3]
       return tf.nn.sigmoid(conv_out)
 
   def _build_residual_block(self, prev_layer_out):
     prev_layer_num_channels = int(prev_layer_out.shape[-1])
-    kernels = tf.get_variable(
-       'kernels',
-       shape=(3, 3, prev_layer_num_channels, 16),
+    kernels1 = tf.get_variable(
+       'kernels1',
+       shape=(3, 3, prev_layer_num_channels, GENERATOR_RES_BLOCK_NUM_CHANNELS),
        initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-    tf.add_to_collection(GENERATOR_PARAMS, kernels)
-    conv_out = tf.nn.conv2d(
+    tf.add_to_collection(GENERATOR_PARAMS, kernels1)
+
+    kernels2 = tf.get_variable(
+       'kernels2',
+       shape=(3, 3, 64, 64),
+       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
+    tf.add_to_collection(GENERATOR_PARAMS, kernels2)
+
+    cur_out = tf.nn.conv2d(
        prev_layer_out,
-       kernels,
+       kernels1,
+       strides=[1, 1, 1, 1],
+       padding='SAME')
+    cur_out = add_batch_normalization(cur_out)
+    cur_out = tf.nn.relu(cur_out)
+    cur_out = tf.nn.conv2d(
+       cur_out,
+       kernels2,
        strides=[1,1,1,1],
        padding='SAME')
-    conv_out = add_batch_normalization(conv_out)
-    return tf.nn.relu(conv_out)
+    cur_out = add_batch_normalization(cur_out)
+    assert cur_out.shape == prev_layer_out.shape
+    cur_out = cur_out + prev_layer_out
+    return cur_out
+
+  def _build_upscaling_block(self, prev_layer_out):
+    prev_layer_shape = [int(x) for x in prev_layer_out.shape]
+    kernels = tf.get_variable(
+       'kernels',
+       shape=(3, 3, prev_layer_shape[-1], UPSCALING_BLOCK_NUM_CHANNELS),
+       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
+    tf.add_to_collection(GENERATOR_PARAMS, kernels)
+
+    cur_out = tf.nn.conv2d(
+        prev_layer_out,
+        kernels,
+        strides=[1, 1, 1, 1],
+        padding='SAME')
+    cur_out = tf.contrib.periodic_resample.periodic_resample(
+        cur_out,
+        [prev_layer_shape[0],
+         prev_layer_shape[1] * 2,
+         prev_layer_shape[2] * 2,
+         UPSCALING_BLOCK_NUM_CHANNELS  / 4])
+    cur_out = add_batch_normalization(cur_out)
+    return tf.nn.relu(cur_out)
 
   def build_generator(self, noise_input):
     with tf.variable_scope('Generator'):
+      res_block_width = TARGET_WIDTH / (2 ** NUM_UPSCALING_BLOCKS)
+      res_block_height = TARGET_HEIGHT / (2 ** NUM_UPSCALING_BLOCKS)
       dense_out = self._build_dense_layer(
-          noise_input, num_units=TARGET_WIDTH * TARGET_HEIGH)
+          noise_input,
+          num_units=res_block_width * res_block_height * GENERATOR_RES_BLOCK_NUM_CHANNELS)
       cur_layer_out = tf.reshape(
-          dense_out, shape=[-1, TARGET_HEIGH, TARGET_WIDTH, 1])
-      for i in xrange(16):
+          dense_out,
+          shape=[-1, res_block_width, res_block_height, GENERATOR_RES_BLOCK_NUM_CHANNELS])
+      for i in xrange(NUM_RES_BLOCKS):
         with tf.variable_scope('Residual_' + str(i)):
           cur_layer_out = self._build_residual_block(
               cur_layer_out)
         assert(cur_layer_out.shape.as_list()[1:] ==
-            [TARGET_HEIGH, TARGET_WIDTH, 16])
+            [res_block_width, res_block_height, GENERATOR_RES_BLOCK_NUM_CHANNELS])
+      expected_width = res_block_width
+      expected_height = res_block_height
+      for i in xrange(NUM_UPSCALING_BLOCKS):
+        with tf.variable_scope('Upscaling_' + str(i)):
+          cur_layer_out = self._build_upscaling_block(cur_layer_out)
+          expected_width *= 2
+          expected_height *= 2
+
+        assert(cur_layer_out.shape.as_list()[1:] ==
+            [expected_width, expected_height, UPSCALING_BLOCK_NUM_CHANNELS / 4])
       return self._build_output_layer(cur_layer_out)
 
 
 class Discriminator(object):
-  def _build_residual_block(self, prev_layer_out, spatial_stride):
+  def _build_residual_block(self, prev_layer_out, num_channels):
+    prev_layer_num_channels = int(prev_layer_out.shape[-1])
+    kernels1 = tf.get_variable(
+       'kernels1',
+       shape=(3, 3, prev_layer_num_channels, num_channels),
+       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
+    tf.add_to_collection(DISCRIMINATOR_PARAMS, kernels1)
+
+    kernels2 = tf.get_variable(
+       'kernels2',
+       shape=(3, 3, prev_layer_num_channels, num_channels),
+       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
+    tf.add_to_collection(DISCRIMINATOR_PARAMS, kernels2)
+
+    cur_out = tf.nn.conv2d(
+       prev_layer_out,
+       kernels1,
+       strides=[1, 1, 1, 1],
+       padding='SAME')
+    cur_out = tf.nn.leaky_relu(cur_out)
+    cur_out = tf.nn.conv2d(
+       cur_out,
+       kernels2,
+       strides=[1, 1, 1, 1],
+       padding='SAME')
+    cur_out = cur_out + prev_layer_out
+
+    return tf.nn.leaky_relu(cur_out)
+
+  def _build_conv_block(self, prev_layer_out, kernel_size, num_channels, stride):
     prev_layer_num_channels = int(prev_layer_out.shape[-1])
     kernels = tf.get_variable(
        'kernels',
-       shape=(3, 3, prev_layer_num_channels, 16),
+       shape=(kernel_size, kernel_size, prev_layer_num_channels, num_channels),
        initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
     tf.add_to_collection(DISCRIMINATOR_PARAMS, kernels)
-    conv_out = tf.nn.conv2d(
+
+    cur_out = tf.nn.conv2d(
        prev_layer_out,
        kernels,
-       strides=[1, spatial_stride, spatial_stride, 1],
+       strides=[1, stride, stride, 1],
        padding='SAME')
-    return tf.nn.relu(conv_out)
+    return tf.nn.leaky_relu(cur_out)
 
   def build_discriminator(self, image_input, reuse):
     with tf.variable_scope('Discriminator', reuse=reuse):
-      cur_input = image_input
-      for i in xrange(10):
-        with tf.variable_scope('DiscriminatorResidual_' + str(i), reuse=reuse):
-          cur_input = self._build_residual_block(
-              cur_input,
-              1 if i < 8 else 2)
+      cur_layer_out = image_input
+      layer_index = 0
+      cur_num_channels = 32
+      for _ in xrange(5):
+        with tf.variable_scope('DiscriminatorConv' + str(layer_index), reuse=reuse):
+          layer_index += 1
+          cur_layer_out = self._build_conv_block(cur_layer_out,
+              kernel_size=4 if cur_num_channels < 256 else 3,
+              num_channels=cur_num_channels,
+              stride=2)
+        for i in xrange(2):
+          with tf.variable_scope('DiscriminatorResidual_' + str(layer_index), reuse=reuse):
+            layer_index += 1
+            cur_layer_out = self._build_residual_block(
+                cur_layer_out,
+                num_channels=cur_num_channels)
+        cur_num_channels *= 2
+      assert cur_num_channels == 1024
+      with tf.variable_scope('DiscriminatorConv' + str(layer_index), reuse=reuse):
+        layer_index += 1
+        cur_layer_out = self._build_conv_block(cur_layer_out,
+            kernel_size=3, num_channels=cur_num_channels, stride=2)
+
       num_elements = 1
-      for dim in cur_input.shape[1:]:
+      for dim in cur_layer_out.shape[1:]:
         num_elements *= int(dim)
-      cur_input = tf.reshape(cur_input, shape=[-1, num_elements])
+      cur_layer_out = tf.reshape(cur_layer_out, shape=[-1, num_elements])
       w = tf.get_variable(
         'weights',
-        shape=(cur_input.shape[1], 1),
+        shape=(cur_layer_out.shape[1], 1),
         initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
       b = tf.get_variable(
         'biases',
@@ -130,7 +234,7 @@ class Discriminator(object):
         initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
       tf.add_to_collection(DISCRIMINATOR_PARAMS, w)
       tf.add_to_collection(DISCRIMINATOR_PARAMS, b)
-      return tf.matmul(cur_input, w) + b
+      return tf.matmul(cur_layer_out, w) + b
 
 
 def true_images_input_pipeline(file_name):
@@ -146,7 +250,7 @@ def true_images_input_pipeline(file_name):
             dtype=tf.string),
       })
   image = tf.decode_raw(features['image_bytes'], tf.uint8)
-  image = tf.reshape(image, shape=(TARGET_HEIGH, TARGET_WIDTH, 3))
+  image = tf.reshape(image, shape=(TARGET_HEIGHT, TARGET_WIDTH, 3))
   image = tf.cast(image, tf.float32) / 256.
   return tf.train.shuffle_batch(
       [image],
