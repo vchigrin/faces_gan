@@ -287,12 +287,12 @@ def process(input_file_name, should_continue):
   true_discriminator_output_without_sigmoid  = \
       discriminator.build_discriminator(in_true_image, reuse=True)
 
-  discriminator_loss = -0.5 * tf.reduce_mean(
-      -tf.nn.softplus(-true_discriminator_output_without_sigmoid) +
-          (-generated_discriminator_output_without_sigmoid -
-            tf.nn.softplus(-generated_discriminator_output_without_sigmoid)))
-  generator_loss = -0.5 * tf.reduce_mean(
-      -tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
+  discriminator_loss = 0.5 * tf.reduce_mean(
+      tf.nn.softplus(-true_discriminator_output_without_sigmoid) +
+          generated_discriminator_output_without_sigmoid +
+            tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
+  generator_loss = 0.5 * tf.reduce_mean(
+      tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
 
   optimizer = tf.train.AdamOptimizer()
   discriminator_step = optimizer.minimize(
