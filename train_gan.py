@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
+import itertools
+import logging
 import os
 import sys
 import tensorflow as tf
-import logging
 
 #TARGET_WIDTH = 128
 #TARGET_HEIGH = 192
@@ -299,12 +300,19 @@ def process(input_file_name, should_continue):
       discriminator_loss, var_list=tf.get_collection(DISCRIMINATOR_PARAMS))
   generator_step = optimizer.minimize(
       generator_loss, var_list=tf.get_collection(GENERATOR_PARAMS))
+
+  for var in set(itertools.chain(tf.get_collection(DISCRIMINATOR_PARAMS), tf.get_collection(GENERATOR_PARAMS))):
+    tf.summary.histogram(var.name, var)
+    tf.summary.scalar('DBG_MIN_' + var.name, tf.reduce_min(var))
+    tf.summary.scalar('DBG_MAX_' + var.name, tf.reduce_max(var))
+
   global_step_counter = tf.get_variable(
       'global_step_couner', trainable=False, initializer=0)
 
   tf.summary.scalar('discriminator_loss', discriminator_loss)
   tf.summary.scalar('generator_loss', generator_loss)
   tf.summary.image('generated_images', generator_output)
+  tf.summary.histogram('generated_images', generator_output)
 
   discriminator_on_true_images_output = (
       tf.reduce_mean(tf.nn.sigmoid(true_discriminator_output_without_sigmoid)))
