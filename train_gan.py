@@ -117,7 +117,7 @@ class Generator(object):
         [prev_layer_shape[0],
          prev_layer_shape[1] * 2,
          prev_layer_shape[2] * 2,
-         UPSCALING_BLOCK_NUM_CHANNELS  / 4])
+         None])
     cur_out = add_batch_normalization(cur_out)
     return tf.nn.relu(cur_out)
 
