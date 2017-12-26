@@ -306,6 +306,16 @@ def process(input_file_name, should_continue):
   tf.summary.scalar('generator_loss', generator_loss)
   tf.summary.image('generated_images', generator_output)
 
+  discriminator_on_true_images_output = (
+      tf.reduce_mean(tf.nn.sigmoid(true_discriminator_output_without_sigmoid)))
+  discriminator_on_generated_images_output = (
+      tf.reduce_mean(tf.nn.sigmoid(generated_discriminator_output_without_sigmoid)))
+
+  tf.summary.scalar('discriminator_on_true_images_output',
+      discriminator_on_true_images_output);
+  tf.summary.scalar('discriminator_on_generated_images_output',
+      discriminator_on_generated_images_output);
+
   next_step_noise = in_noise.assign(in_noise_pipeline)
   next_step_true_image = in_true_image.assign(in_true_image_pipeline)
   increment_global_step_counter = global_step_counter.assign_add(1)
