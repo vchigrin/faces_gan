@@ -35,20 +35,35 @@ def add_batch_normalization(prev_layer_out):
       variance_epsilon=10 ** -9)
 
 
-class Generator(object):
+class Network(object):
+  def _collection_name(self):
+    raise NotImplemented();
+
+  def _get_variable(self, name, shape):
+    result = tf.get_variable(
+      name,
+      shape=shape,
+      initializer=tf.random_normal_initializer(mean=0, stddev=0.02))
+    tf.add_to_collection(self._collection_name(), result)
+    return result
+
+
+class Generator(Network):
+  def __init__(self):
+    super(Generator, self).__init__()
+
+  def _collection_name(self):
+    return GENERATOR_PARAMS
+
   def _build_dense_layer(self, prev_layer_out, num_units):
     prev_layer_num_units = int(prev_layer_out.shape[-1])
     with tf.variable_scope('Dense'):
-      w = tf.get_variable(
+      w = self._get_variable(
         'weights',
-        shape=(prev_layer_num_units, num_units),
-        initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-      b = tf.get_variable(
+        shape=(prev_layer_num_units, num_units))
+      b = self._get_variable(
         'biases',
-        shape=(1, num_units),
-        initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-      tf.add_to_collection(GENERATOR_PARAMS, w)
-      tf.add_to_collection(GENERATOR_PARAMS, b)
+        shape=(1, num_units))
       dense_normalized = add_batch_normalization(
           tf.matmul(prev_layer_out, w) + b)
       return tf.nn.relu(dense_normalized)
@@ -56,11 +71,9 @@ class Generator(object):
   def _build_output_layer(self, prev_layer_out):
     with tf.variable_scope('Output'):
       prev_layer_num_channels = int(prev_layer_out.shape[-1])
-      kernels = tf.get_variable(
+      kernels = self._get_variable(
          'kernels',
-         shape=(9, 9, prev_layer_num_channels, 3),
-         initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-      tf.add_to_collection(GENERATOR_PARAMS, kernels)
+         shape=(9, 9, prev_layer_num_channels, 3))
       conv_out = tf.nn.conv2d(
          prev_layer_out,
          kernels,
@@ -71,17 +84,13 @@ class Generator(object):
 
   def _build_residual_block(self, prev_layer_out):
     prev_layer_num_channels = int(prev_layer_out.shape[-1])
-    kernels1 = tf.get_variable(
+    kernels1 = self._get_variable(
        'kernels1',
-       shape=(3, 3, prev_layer_num_channels, GENERATOR_RES_BLOCK_NUM_CHANNELS),
-       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-    tf.add_to_collection(GENERATOR_PARAMS, kernels1)
+       shape=(3, 3, prev_layer_num_channels, GENERATOR_RES_BLOCK_NUM_CHANNELS))
 
-    kernels2 = tf.get_variable(
+    kernels2 = self._get_variable(
        'kernels2',
-       shape=(3, 3, 64, 64),
-       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-    tf.add_to_collection(GENERATOR_PARAMS, kernels2)
+       shape=(3, 3, 64, 64))
 
     cur_out = tf.nn.conv2d(
        prev_layer_out,
@@ -102,11 +111,9 @@ class Generator(object):
 
   def _build_upscaling_block(self, prev_layer_out):
     prev_layer_shape = [int(x) for x in prev_layer_out.shape]
-    kernels = tf.get_variable(
+    kernels = self._get_variable(
        'kernels',
-       shape=(3, 3, prev_layer_shape[-1], UPSCALING_BLOCK_NUM_CHANNELS),
-       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-    tf.add_to_collection(GENERATOR_PARAMS, kernels)
+       shape=(3, 3, prev_layer_shape[-1], UPSCALING_BLOCK_NUM_CHANNELS))
 
     cur_out = tf.nn.conv2d(
         prev_layer_out,
@@ -151,20 +158,22 @@ class Generator(object):
       return self._build_output_layer(cur_layer_out)
 
 
-class Discriminator(object):
+class Discriminator(Network):
+  def __init__(self):
+    super(Discriminator, self).__init__()
+
+  def _collection_name(self):
+    return DISCRIMINATOR_PARAMS
+
   def _build_residual_block(self, prev_layer_out, num_channels):
     prev_layer_num_channels = int(prev_layer_out.shape[-1])
-    kernels1 = tf.get_variable(
+    kernels1 = self._get_variable(
        'kernels1',
-       shape=(3, 3, prev_layer_num_channels, num_channels),
-       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-    tf.add_to_collection(DISCRIMINATOR_PARAMS, kernels1)
+       shape=(3, 3, prev_layer_num_channels, num_channels))
 
-    kernels2 = tf.get_variable(
+    kernels2 = self._get_variable(
        'kernels2',
-       shape=(3, 3, prev_layer_num_channels, num_channels),
-       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-    tf.add_to_collection(DISCRIMINATOR_PARAMS, kernels2)
+       shape=(3, 3, prev_layer_num_channels, num_channels))
 
     cur_out = tf.nn.conv2d(
        prev_layer_out,
@@ -183,11 +192,9 @@ class Discriminator(object):
 
   def _build_conv_block(self, prev_layer_out, kernel_size, num_channels, stride):
     prev_layer_num_channels = int(prev_layer_out.shape[-1])
-    kernels = tf.get_variable(
+    kernels = self._get_variable(
        'kernels',
-       shape=(kernel_size, kernel_size, prev_layer_num_channels, num_channels),
-       initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-    tf.add_to_collection(DISCRIMINATOR_PARAMS, kernels)
+       shape=(kernel_size, kernel_size, prev_layer_num_channels, num_channels))
 
     cur_out = tf.nn.conv2d(
        prev_layer_out,
@@ -225,16 +232,12 @@ class Discriminator(object):
       for dim in cur_layer_out.shape[1:]:
         num_elements *= int(dim)
       cur_layer_out = tf.reshape(cur_layer_out, shape=[-1, num_elements])
-      w = tf.get_variable(
+      w = self._get_variable(
         'weights',
-        shape=(cur_layer_out.shape[1], 1),
-        initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-      b = tf.get_variable(
+        shape=(cur_layer_out.shape[1], 1))
+      b = self._get_variable(
         'biases',
-        shape=(1, 1),
-        initializer=tf.random_normal_initializer(mean=0, stddev=0.2))
-      tf.add_to_collection(DISCRIMINATOR_PARAMS, w)
-      tf.add_to_collection(DISCRIMINATOR_PARAMS, b)
+        shape=(1, 1))
       return tf.matmul(cur_layer_out, w) + b
 
 
