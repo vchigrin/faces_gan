@@ -66,7 +66,7 @@ class Generator(Network):
         shape=(1, num_units))
       dense_normalized = add_batch_normalization(
           tf.matmul(prev_layer_out, w) + b)
-      return tf.nn.relu(dense_normalized)
+      return tf.nn.leaky_relu(dense_normalized)
 
   def _build_output_layer(self, prev_layer_out):
     with tf.variable_scope('Output'):
@@ -98,7 +98,7 @@ class Generator(Network):
        strides=[1, 1, 1, 1],
        padding='SAME')
     cur_out = add_batch_normalization(cur_out)
-    cur_out = tf.nn.relu(cur_out)
+    cur_out = tf.nn.leaky_relu(cur_out)
     cur_out = tf.nn.conv2d(
        cur_out,
        kernels2,
@@ -127,7 +127,7 @@ class Generator(Network):
          prev_layer_shape[2] * 2,
          None])
     cur_out = add_batch_normalization(cur_out)
-    return tf.nn.relu(cur_out)
+    return tf.nn.leaky_relu(cur_out)
 
   def build_generator(self, noise_input):
     with tf.variable_scope('Generator'):
