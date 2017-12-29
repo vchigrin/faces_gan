@@ -74,11 +74,15 @@ class Generator(Network):
       kernels = self._get_variable(
          'kernels',
          shape=(9, 9, prev_layer_num_channels, 3))
+      biases = self._get_variable(
+          'biases',
+          shape=(1, 1, 3))
       conv_out = tf.nn.conv2d(
          prev_layer_out,
          kernels,
          strides=[1, 1, 1, 1],
          padding='SAME')
+      conv_out = conv_out + biases
       assert conv_out.shape.as_list()[1:] == [TARGET_HEIGHT, TARGET_WIDTH, 3]
       return tf.nn.sigmoid(conv_out)
 
@@ -90,13 +94,22 @@ class Generator(Network):
 
     kernels2 = self._get_variable(
        'kernels2',
-       shape=(3, 3, 64, 64))
+       shape=(3, 3, GENERATOR_RES_BLOCK_NUM_CHANNELS, GENERATOR_RES_BLOCK_NUM_CHANNELS))
+
+    biases1 = self._get_variable(
+        'biases1',
+        shape=(1, 1, GENERATOR_RES_BLOCK_NUM_CHANNELS))
+
+    biases2 = self._get_variable(
+        'biases2',
+        shape=(1, 1, GENERATOR_RES_BLOCK_NUM_CHANNELS))
 
     cur_out = tf.nn.conv2d(
        prev_layer_out,
        kernels1,
        strides=[1, 1, 1, 1],
        padding='SAME')
+    cur_out = cur_out + biases1
     cur_out = add_batch_normalization(cur_out)
     cur_out = tf.nn.leaky_relu(cur_out)
     cur_out = tf.nn.conv2d(
@@ -104,6 +117,7 @@ class Generator(Network):
        kernels2,
        strides=[1,1,1,1],
        padding='SAME')
+    cur_out = cur_out + biases2
     cur_out = add_batch_normalization(cur_out)
     assert cur_out.shape == prev_layer_out.shape
     cur_out = cur_out + prev_layer_out
@@ -114,12 +128,16 @@ class Generator(Network):
     kernels = self._get_variable(
        'kernels',
        shape=(3, 3, prev_layer_shape[-1], UPSCALING_BLOCK_NUM_CHANNELS))
+    biases = self._get_variable(
+       'biases',
+       shape=(1, 1, UPSCALING_BLOCK_NUM_CHANNELS))
 
     cur_out = tf.nn.conv2d(
         prev_layer_out,
         kernels,
         strides=[1, 1, 1, 1],
         padding='SAME')
+    cur_out = cur_out + biases
     cur_out = tf.contrib.periodic_resample.periodic_resample(
         cur_out,
         [prev_layer_shape[0],
@@ -175,17 +193,28 @@ class Discriminator(Network):
        'kernels2',
        shape=(3, 3, prev_layer_num_channels, num_channels))
 
+    biases1 = self._get_variable(
+        'biases1',
+        shape=(1, 1, num_channels))
+
+    biases2 = self._get_variable(
+        'biases2',
+        shape=(1, 1, num_channels))
+
     cur_out = tf.nn.conv2d(
        prev_layer_out,
        kernels1,
        strides=[1, 1, 1, 1],
        padding='SAME')
+    cur_out = cur_out + biases1
     cur_out = tf.nn.leaky_relu(cur_out)
     cur_out = tf.nn.conv2d(
        cur_out,
        kernels2,
        strides=[1, 1, 1, 1],
        padding='SAME')
+    cur_out = cur_out + biases2
+
     cur_out = cur_out + prev_layer_out
 
     return tf.nn.leaky_relu(cur_out)
@@ -195,12 +224,16 @@ class Discriminator(Network):
     kernels = self._get_variable(
        'kernels',
        shape=(kernel_size, kernel_size, prev_layer_num_channels, num_channels))
+    biases = self._get_variable(
+       'biases',
+       shape=(1, 1, num_channels))
 
     cur_out = tf.nn.conv2d(
        prev_layer_out,
        kernels,
        strides=[1, stride, stride, 1],
        padding='SAME')
+    cur_out = cur_out + biases
     return tf.nn.leaky_relu(cur_out)
 
   def build_discriminator(self, image_input, reuse):
