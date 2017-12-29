@@ -360,7 +360,10 @@ def process(input_file_name, should_continue):
   generator_loss = 0.5 * tf.reduce_mean(
       tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
 
-  optimizer = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5)
+  optimizer = tf.train.AdamOptimizer(
+      learning_rate=0.0002,
+      beta1=0.5,
+      epsilon=1e-04)
   discriminator_step = optimizer.minimize(
       discriminator_loss, var_list=tf.get_collection(DISCRIMINATOR_PARAMS))
   generator_step = optimizer.minimize(
