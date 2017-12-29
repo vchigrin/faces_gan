@@ -214,6 +214,7 @@ class Discriminator(Network):
        strides=[1, 1, 1, 1],
        padding='SAME')
     cur_out = cur_out + biases2
+    cur_out = tf.nn.leaky_relu(cur_out)
 
     cur_out = cur_out + prev_layer_out
 
