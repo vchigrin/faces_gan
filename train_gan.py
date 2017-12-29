@@ -339,12 +339,14 @@ def process(input_file_name, should_continue):
       tf.reduce_mean(tf.nn.sigmoid(generated_discriminator_output_without_sigmoid)))
 
   perturbed_true_images = compute_perturbed_images(in_true_image)
-  discriminator_on_perturbed_images_output = (
-      tf.nn.sigmoid(
-          discriminator.build_discriminator(perturbed_true_images, reuse=True)))
+  discriminator_on_perturbed_images_without_sigmoid = (
+          discriminator.build_discriminator(perturbed_true_images, reuse=True))
 
+  # Actually DRAGAN requires gradient of discriminator output with sigmoid,
+  # but try to use logits gradient instead to overcome division by zero error.
   gradients = tf.gradients(
-      discriminator_on_perturbed_images_output, [perturbed_true_images])[0]
+      discriminator_on_perturbed_images_without_sigmoid,
+          [perturbed_true_images])[0]
   l2_gradients_minus_one = (1 - tf.sqrt(
       tf.reduce_sum(tf.square(gradients), axis=(1, 2, 3))))
   dragan_loss = DRAGAN_COEF * tf.square(l2_gradients_minus_one)
