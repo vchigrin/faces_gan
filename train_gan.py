@@ -381,7 +381,7 @@ def process(input_file_name, should_continue):
       sw = tf.summary.FileWriter('summary_dir', session.graph)
       try:
         while not coordinator.should_stop():
-          for _ in xrange(1):
+          for _ in xrange(5):
             session.run([next_step_noise, next_step_true_image])
             session.run(discriminator_step)
           session.run([next_step_noise, next_step_true_image])
