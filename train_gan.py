@@ -19,6 +19,7 @@ NOISE_SIZE = 128
 TRUE_IMAGES_BATCH_SIZE = 64
 NOISE_BATCH_SIZE = TRUE_IMAGES_BATCH_SIZE
 NUM_EPOCHS = 100
+DRAGAN_COEF = 10
 
 GENERATOR_PARAMS = 'generator_params'
 DISCRIMINATOR_PARAMS = 'discriminator_params'
@@ -301,6 +302,13 @@ def noise_input_pipeline():
   return tf.random_uniform(shape=[NOISE_BATCH_SIZE, NOISE_SIZE])
 
 
+def compute_perturbed_images(in_true_images):
+  mean, variance = tf.nn.moments(in_true_images, axes=[0])
+  C = tf.random_uniform(shape=(1, 1))
+  std_dev = tf.sqrt(variance)
+  return in_true_images + C * 0.5 * std_dev
+
+
 def process(input_file_name, should_continue):
   tf.set_random_seed(12345)
 
@@ -325,10 +333,28 @@ def process(input_file_name, should_continue):
   true_discriminator_output_without_sigmoid  = \
       discriminator.build_discriminator(in_true_image, reuse=True)
 
+  discriminator_on_true_images_output = (
+      tf.reduce_mean(tf.nn.sigmoid(true_discriminator_output_without_sigmoid)))
+  discriminator_on_generated_images_output = (
+      tf.reduce_mean(tf.nn.sigmoid(generated_discriminator_output_without_sigmoid)))
+
+  perturbed_true_images = compute_perturbed_images(in_true_image)
+  discriminator_on_perturbed_images_output = (
+      tf.nn.sigmoid(
+          discriminator.build_discriminator(perturbed_true_images, reuse=True)))
+
+  gradients = tf.gradients(
+      discriminator_on_perturbed_images_output, [perturbed_true_images])[0]
+  l2_gradients_minus_one = (1 - tf.sqrt(
+      tf.reduce_sum(tf.square(gradients), axis=(1, 2, 3))))
+  dragan_loss = DRAGAN_COEF * tf.square(l2_gradients_minus_one)
+
   discriminator_loss = 0.5 * tf.reduce_mean(
       tf.nn.softplus(-true_discriminator_output_without_sigmoid) +
           generated_discriminator_output_without_sigmoid +
-            tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
+            tf.nn.softplus(-generated_discriminator_output_without_sigmoid) +
+            dragan_loss)
+
   generator_loss = 0.5 * tf.reduce_mean(
       tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
 
@@ -344,11 +370,6 @@ def process(input_file_name, should_continue):
   tf.summary.scalar('discriminator_loss', discriminator_loss)
   tf.summary.scalar('generator_loss', generator_loss)
   tf.summary.image('generated_images', generator_output)
-
-  discriminator_on_true_images_output = (
-      tf.reduce_mean(tf.nn.sigmoid(true_discriminator_output_without_sigmoid)))
-  discriminator_on_generated_images_output = (
-      tf.reduce_mean(tf.nn.sigmoid(generated_discriminator_output_without_sigmoid)))
 
   tf.summary.scalar('discriminator_on_true_images_output',
       discriminator_on_true_images_output);
