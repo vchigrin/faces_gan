@@ -342,23 +342,24 @@ def process(input_file_name, should_continue):
   discriminator_on_perturbed_images_without_sigmoid = (
           discriminator.build_discriminator(perturbed_true_images, reuse=True))
 
-  # Actually DRAGAN requires gradient of discriminator output with sigmoid,
-  # but try to use logits gradient instead to overcome division by zero error.
-  gradients = tf.gradients(
-      discriminator_on_perturbed_images_without_sigmoid,
-          [perturbed_true_images])[0]
-  l2_gradients_minus_one = (1 - tf.sqrt(
-      tf.reduce_sum(tf.square(gradients), axis=(1, 2, 3))))
-  dragan_loss = DRAGAN_COEF * tf.square(l2_gradients_minus_one)
+  with tf.name_scope('losses'):
+    # Actually DRAGAN requires gradient of discriminator output with sigmoid,
+    # but try to use logits gradient instead to overcome division by zero error.
+    gradients = tf.gradients(
+        discriminator_on_perturbed_images_without_sigmoid,
+            [perturbed_true_images])[0]
+    l2_gradients_minus_one = (1 - tf.sqrt(
+        tf.reduce_sum(tf.square(gradients), axis=(1, 2, 3))))
+    dragan_loss = DRAGAN_COEF * tf.square(l2_gradients_minus_one)
 
-  discriminator_loss = 0.5 * tf.reduce_mean(
-      tf.nn.softplus(-true_discriminator_output_without_sigmoid) +
-          generated_discriminator_output_without_sigmoid +
-            tf.nn.softplus(-generated_discriminator_output_without_sigmoid) +
-            dragan_loss)
+    discriminator_loss = 0.5 * tf.reduce_mean(
+        tf.nn.softplus(-true_discriminator_output_without_sigmoid) +
+            generated_discriminator_output_without_sigmoid +
+              tf.nn.softplus(-generated_discriminator_output_without_sigmoid) +
+              dragan_loss)
 
-  generator_loss = 0.5 * tf.reduce_mean(
-      tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
+    generator_loss = 0.5 * tf.reduce_mean(
+        tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
 
   optimizer = tf.train.AdamOptimizer(
       learning_rate=0.0002,
