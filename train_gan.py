@@ -386,7 +386,7 @@ def process(input_file_name, should_continue):
   next_step_true_image = in_true_image.assign(in_true_image_pipeline)
   increment_global_step_counter = global_step_counter.assign_add(1)
 
-  model_saver = tf.train.Saver(max_to_keep=4)
+  model_saver = tf.train.Saver(max_to_keep=5)
   merged_summaries = tf.summary.merge_all()
   if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
@@ -416,8 +416,19 @@ def process(input_file_name, should_continue):
           counter_val = session.run(increment_global_step_counter)
           summary = session.run(merged_summaries)
           sw.add_summary(summary, counter_val)
-          logging.info('{} iterations done'.format(counter_val))
-          if counter_val % 5 == 0:
+          dl, gl = session.run([discriminator_loss, generator_loss])
+          logging.info('{} iterations done, Discriminator loss {}, generator loss {}'.format(
+              counter_val, dl, gl))
+          if dl > 500 or gl > 500:
+            logging.info('Model blowed up! stopping...')
+            model_saver.save(
+                session,
+                model_file_prefix,
+                global_step=counter_val,
+                latest_filename='checkpoint',
+                write_meta_graph=False)
+            break
+          if counter_val % 100 == 0:
             model_saver.save(
                 session,
                 model_file_prefix,
