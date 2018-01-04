@@ -17,6 +17,8 @@ GENERATOR_RES_BLOCK_NUM_CHANNELS = 64
 UPSCALING_BLOCK_NUM_CHANNELS = 256
 NUM_RES_BLOCKS = 16
 
+DISCRIMINATOR_GRADIENT_CLIP_NORM = 10
+
 NOISE_SIZE = 128
 TRUE_IMAGES_BATCH_SIZE = 64
 NOISE_BATCH_SIZE = TRUE_IMAGES_BATCH_SIZE
@@ -395,8 +397,15 @@ def process(parsed_args):
         tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
 
   optimizer = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5)
-  discriminator_step = optimizer.minimize(
+  grads_and_vars = optimizer.compute_gradients(
       discriminator_loss, var_list=tf.get_collection(DISCRIMINATOR_PARAMS))
+
+  gradients, variables = zip(*grads_and_vars)
+  gradients, original_norm = tf.clip_by_global_norm(
+      gradients, DISCRIMINATOR_GRADIENT_CLIP_NORM)
+  grads_and_vars = list(zip(gradients, variables))
+  discriminator_step = optimizer.apply_gradients(grads_and_vars)
+
   generator_step = optimizer.minimize(
       generator_loss, var_list=tf.get_collection(GENERATOR_PARAMS))
 
@@ -445,10 +454,11 @@ def process(parsed_args):
         while not coordinator.should_stop():
           for i in xrange(5):
             session.run([next_step_noise, next_step_true_image])
-            run_with_trace_if_need(
-                session, discriminator_step,
+            _, original_norm_value = run_with_trace_if_need(
+                session, [discriminator_step, original_norm],
                 parsed_args.dump_traces,
                 'Discriminator_{}_{}.json'.format(counter_val, i))
+            logging.info('Original Discriminator gradient norm {}'.format(original_norm_value))
           session.run([next_step_noise, next_step_true_image])
           _, dl, gl, summary, counter_val = run_with_trace_if_need(
               session,
