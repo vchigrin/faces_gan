@@ -25,14 +25,18 @@ GENERATOR_PARAMS = 'generator_params'
 DISCRIMINATOR_PARAMS = 'discriminator_params'
 MODEL_DIR = 'model'
 
-def add_batch_normalization(prev_layer_out):
+def add_batch_normalization(prev_layer_out, offset=None, scale=None):
   mean, variance = tf.nn.moments(prev_layer_out, axes=[0])
+  if offset is not None:
+    assert offset.shape == mean.shape
+  if scale is not None:
+    assert scale.shape == mean.shape
   return tf.nn.batch_normalization(
       prev_layer_out,
       mean,
       variance,
-      offset=None,
-      scale=None,
+      offset=offset,
+      scale=scale,
       variance_epsilon=10 ** -9)
 
 
@@ -40,13 +44,27 @@ class Network(object):
   def _collection_name(self):
     raise NotImplemented();
 
-  def _get_variable(self, name, shape):
+  def _get_variable(self, name, shape, mean=0):
     result = tf.get_variable(
       name,
       shape=shape,
-      initializer=tf.random_normal_initializer(mean=0, stddev=0.02))
+      initializer=tf.random_normal_initializer(mean=mean, stddev=0.02))
     tf.add_to_collection(self._collection_name(), result)
     return result
+
+  def _make_batch_normalization_block(self, prev_layer_out):
+    offset_and_scale_shape = prev_layer_out.shape.as_list()
+    del offset_and_scale_shape[0]  # Batch dimension
+
+    offset = self._get_variable(
+        'offset',
+        shape=offset_and_scale_shape)
+    scale = self._get_variable(
+        'scale',
+        shape=offset_and_scale_shape,
+        mean=1.)
+    return add_batch_normalization(
+        prev_layer_out, offset=offset, scale=scale)
 
 
 class Generator(Network):
@@ -97,29 +115,21 @@ class Generator(Network):
        'kernels2',
        shape=(3, 3, GENERATOR_RES_BLOCK_NUM_CHANNELS, GENERATOR_RES_BLOCK_NUM_CHANNELS))
 
-    biases1 = self._get_variable(
-        'biases1',
-        shape=(1, 1, GENERATOR_RES_BLOCK_NUM_CHANNELS))
-
-    biases2 = self._get_variable(
-        'biases2',
-        shape=(1, 1, GENERATOR_RES_BLOCK_NUM_CHANNELS))
-
     cur_out = tf.nn.conv2d(
        prev_layer_out,
        kernels1,
        strides=[1, 1, 1, 1],
        padding='SAME')
-    cur_out = cur_out + biases1
-    cur_out = add_batch_normalization(cur_out)
+    with tf.variable_scope('BatchNormalization1'):
+      cur_out = self._make_batch_normalization_block(cur_out)
     cur_out = tf.nn.leaky_relu(cur_out)
     cur_out = tf.nn.conv2d(
        cur_out,
        kernels2,
        strides=[1,1,1,1],
        padding='SAME')
-    cur_out = cur_out + biases2
-    cur_out = add_batch_normalization(cur_out)
+    with tf.variable_scope('BatchNormalization2'):
+      cur_out = self._make_batch_normalization_block(cur_out)
     assert cur_out.shape == prev_layer_out.shape
     cur_out = cur_out + prev_layer_out
     return cur_out
@@ -192,15 +202,14 @@ class Discriminator(Network):
 
     kernels2 = self._get_variable(
        'kernels2',
-       shape=(3, 3, prev_layer_num_channels, num_channels))
+       shape=(3, 3, num_channels, num_channels))
 
-    biases1 = self._get_variable(
-        'biases1',
-        shape=(1, 1, num_channels))
+    biases_shape = prev_layer_out.shape.as_list()
+    del biases_shape[0]  # Batch dimension
+    biases_shape[-1] = num_channels
 
-    biases2 = self._get_variable(
-        'biases2',
-        shape=(1, 1, num_channels))
+    biases1 = self._get_variable('biases1', shape=biases_shape)
+    biases2 = self._get_variable('biases2', shape=biases_shape)
 
     cur_out = tf.nn.conv2d(
        prev_layer_out,
@@ -226,15 +235,20 @@ class Discriminator(Network):
     kernels = self._get_variable(
        'kernels',
        shape=(kernel_size, kernel_size, prev_layer_num_channels, num_channels))
-    biases = self._get_variable(
-       'biases',
-       shape=(1, 1, num_channels))
 
     cur_out = tf.nn.conv2d(
        prev_layer_out,
        kernels,
        strides=[1, stride, stride, 1],
        padding='SAME')
+
+    biases_shape = cur_out.shape.as_list()
+    del biases_shape[0]  # Batch dimension
+
+    biases = self._get_variable(
+       'biases',
+       shape=biases_shape)
+
     cur_out = cur_out + biases
     return tf.nn.leaky_relu(cur_out)
 
