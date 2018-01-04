@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import tensorflow as tf
+from tensorflow.python.client import timeline
 
 #TARGET_WIDTH = 128
 #TARGET_HEIGH = 192
@@ -25,6 +26,7 @@ DRAGAN_COEF = 10
 GENERATOR_PARAMS = 'generator_params'
 DISCRIMINATOR_PARAMS = 'discriminator_params'
 MODEL_DIR = 'model'
+TRACE_DIR = 'trace'
 
 def add_batch_normalization(prev_layer_out, offset=None, scale=None):
   mean, variance = tf.nn.moments(prev_layer_out, axes=[0])
@@ -324,6 +326,21 @@ def compute_perturbed_images(in_true_images):
   return in_true_images + C * 0.5 * std_dev
 
 
+def run_with_trace_if_need(session, steps_to_run, dump_traces, file_name):
+  if not dump_traces:
+    return session.run(steps_to_run)
+  run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+  run_metadata = tf.RunMetadata()
+  results = session.run(
+      steps_to_run, options=run_options, run_metadata=run_metadata)
+  tl = timeline.Timeline(run_metadata.step_stats)
+  if not os.path.exists(TRACE_DIR):
+    os.makedirs(TRACE_DIR)
+  with open(os.path.join(TRACE_DIR, file_name), 'w') as f:
+    f.write(tl.generate_chrome_trace_format())
+  return results
+
+
 def process(parsed_args):
   tf.set_random_seed(12345)
 
@@ -424,17 +441,24 @@ def process(parsed_args):
       tf.train.start_queue_runners(sess=session, coord=coordinator)
       sw = tf.summary.FileWriter('summary_dir', session.graph)
       try:
+        counter_val = 0
         while not coordinator.should_stop():
-          for _ in xrange(5):
+          for i in xrange(5):
             session.run([next_step_noise, next_step_true_image])
-            session.run(discriminator_step)
+            run_with_trace_if_need(
+                session, discriminator_step,
+                parsed_args.dump_traces,
+                'Discriminator_{}_{}.json'.format(counter_val, i))
           session.run([next_step_noise, next_step_true_image])
-          _, dl, gl, summary, counter_val = session.run([
-              generator_step,
-              discriminator_loss,
-              generator_loss,
-              merged_summaries,
-              increment_global_step_counter])
+          _, dl, gl, summary, counter_val = run_with_trace_if_need(
+              session,
+              [generator_step,
+                discriminator_loss,
+                generator_loss,
+                merged_summaries,
+                increment_global_step_counter],
+               parsed_args.dump_traces,
+               'Generator_{}.json'.format(counter_val))
           sw.add_summary(summary, counter_val)
           if parsed_args.show_fixed_noise_output:
             session.run(in_noise.assign(fixed_noise))
@@ -472,6 +496,9 @@ def parse_args():
   parser.add_argument(
       '--show-fixed-noise-output', action='store_true',
       help='Displays generator perfromance on some fixed noise vector')
+  parser.add_argument(
+      '--dump-traces', action='store_true',
+      help='Dumps performance traces in Chrome trace JSON format')
   return parser.parse_args()
 
 def main():
