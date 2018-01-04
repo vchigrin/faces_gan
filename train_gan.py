@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import argparse
 import itertools
 import logging
 import os
@@ -323,11 +324,12 @@ def compute_perturbed_images(in_true_images):
   return in_true_images + C * 0.5 * std_dev
 
 
-def process(input_file_name, should_continue):
+def process(parsed_args):
   tf.set_random_seed(12345)
 
   in_noise_pipeline = noise_input_pipeline()
-  in_true_image_pipeline = true_images_input_pipeline(input_file_name)
+  in_true_image_pipeline = true_images_input_pipeline(
+      parsed_args.prepared_file_name)
 
   # Explicity dequeue next data from pilelines and use it during iteration
   # to ensure data we're operating will not change on each access.
@@ -399,13 +401,17 @@ def process(input_file_name, should_continue):
 
   model_saver = tf.train.Saver(max_to_keep=5)
   merged_summaries = tf.summary.merge_all()
+  fixed_noise_output = tf.summary.image('fixed_noise_image', generator_output)
   if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
   model_file_prefix = os.path.join(MODEL_DIR, 'GAN')
   with tf.Session() as session:
     with session.as_default():
+      fixed_noise = session.run(
+          tf.random_uniform(shape=[NOISE_BATCH_SIZE, NOISE_SIZE]))
+
       session.run(tf.global_variables_initializer())
-      if should_continue:
+      if parsed_args.continue_from_checkpoint:
         latest_checkpoint = tf.train.latest_checkpoint(MODEL_DIR)
         logging.info(
             'NOTE: Restoring saved session from {}....'.format(latest_checkpoint))
@@ -423,11 +429,16 @@ def process(input_file_name, should_continue):
             session.run([next_step_noise, next_step_true_image])
             session.run(discriminator_step)
           session.run([next_step_noise, next_step_true_image])
-          session.run(generator_step)
-          counter_val = session.run(increment_global_step_counter)
-          summary = session.run(merged_summaries)
+          _, dl, gl, summary, counter_val = session.run([
+              generator_step,
+              discriminator_loss,
+              generator_loss,
+              merged_summaries,
+              increment_global_step_counter])
           sw.add_summary(summary, counter_val)
-          dl, gl = session.run([discriminator_loss, generator_loss])
+          if parsed_args.show_fixed_noise_output:
+            session.run(in_noise.assign(fixed_noise))
+            sw.add_summary(session.run(fixed_noise_output), counter_val)
           logging.info('{} iterations done, Discriminator loss {}, generator loss {}'.format(
               counter_val, dl, gl))
           if dl > 500 or gl > 500:
@@ -450,18 +461,22 @@ def process(input_file_name, should_continue):
         sw.close()
         coordinator.request_stop()
 
+def parse_args():
+  parser = argparse.ArgumentParser('Trains GAN neural network')
+  parser.add_argument(
+      'prepared_file_name',
+      help='File with source images, in Tensorflow format')
+  parser.add_argument(
+      '--continue-from-checkpoint', action='store_true',
+      help='Continue training from the latest checkpoint')
+  parser.add_argument(
+      '--show-fixed-noise-output', action='store_true',
+      help='Displays generator perfromance on some fixed noise vector')
+  return parser.parse_args()
 
 def main():
-  if len(sys.argv) < 2:
-    sys.stderr.write('Trains GAN\n');
-    sys.stderr.write(
-        'Usage: {} <prepared_tensorflow_file> [--continue]\n'.format(sys.argv[0]))
-    sys.exit(1)
-  should_continue = False
-  if len(sys.argv) == 3 and sys.argv[2] == '--continue':
-    should_continue = True
   logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
-  process(sys.argv[1], should_continue)
+  process(parse_args())
 
 
 if __name__ == '__main__':
