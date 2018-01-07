@@ -17,13 +17,15 @@ GENERATOR_RES_BLOCK_NUM_CHANNELS = 64
 UPSCALING_BLOCK_NUM_CHANNELS = 256
 NUM_RES_BLOCKS = 16
 
-DISCRIMINATOR_GRADIENT_CLIP_NORM = 10
+DISCRIMINATOR_GRADIENT_CLIP_NORM = 5
 
 NOISE_SIZE = 128
 TRUE_IMAGES_BATCH_SIZE = 64
 NOISE_BATCH_SIZE = TRUE_IMAGES_BATCH_SIZE
 NUM_EPOCHS = 100
 DRAGAN_COEF = 10
+MAX_ACCEPTABLE_DISCRIMINATOR_LOSS = 5
+MIN_DISCRIMINATOR_STEPS = 3
 
 GENERATOR_PARAMS = 'generator_params'
 DISCRIMINATOR_PARAMS = 'discriminator_params'
@@ -454,26 +456,35 @@ def process(parsed_args):
       coordinator = tf.train.Coordinator()
       tf.train.start_queue_runners(sess=session, coord=coordinator)
       sw = tf.summary.FileWriter('summary_dir', session.graph)
+      discriminator_steps_count_ph = tf.placeholder(dtype=tf.int32)
+      discrimintato_steps_count_summary = tf.summary.scalar('discrimintato_steps_count', discriminator_steps_count_ph)
       try:
         counter_val = 0
         while not coordinator.should_stop():
-          for i in xrange(5):
+          discrimintator_steps_count = 0
+          while True:
+            discrimintator_steps_count += 1
             session.run([next_step_noise, next_step_true_image])
             _, original_norm_value = run_with_trace_if_need(
                 session, [discriminator_step, original_norm],
                 parsed_args.dump_traces,
-                'Discriminator_{}_{}.json'.format(counter_val, i))
-            logging.info('Original Discriminator gradient norm {}'.format(original_norm_value))
+                'Discriminator_{}_{}.json'.format(counter_val, discrimintator_steps_count))
+            dl = session.run(discriminator_loss)
+            if dl < MAX_ACCEPTABLE_DISCRIMINATOR_LOSS and discrimintator_steps_count >= MIN_DISCRIMINATOR_STEPS:
+              break  # Avoid training generator if Discriminator gets into unstable state and produces too big loses
+            logging.info('Discriminator done on step {}, run {} times, loss {}'.format(counter_val, discrimintator_steps_count, dl))
           session.run([next_step_noise, next_step_true_image])
-          _, dl, gl, summary, counter_val = run_with_trace_if_need(
+          _, dl, gl, counter_val = run_with_trace_if_need(
               session,
               [generator_step,
                 discriminator_loss,
                 generator_loss,
-                merged_summaries,
                 increment_global_step_counter],
                parsed_args.dump_traces,
                'Generator_{}.json'.format(counter_val))
+          summary = session.run(merged_summaries)
+          sw.add_summary(summary, counter_val)
+          summary = session.run(discrimintato_steps_count_summary, feed_dict={discriminator_steps_count_ph: discrimintator_steps_count})
           sw.add_summary(summary, counter_val)
           if parsed_args.show_fixed_noise_output:
             session.run(in_noise.assign(fixed_noise))
