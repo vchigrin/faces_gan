@@ -386,12 +386,16 @@ def process(parsed_args):
     l2_gradients_minus_one = (1 - tf.sqrt(
         tf.reduce_sum(tf.square(gradients), axis=(1, 2, 3))))
     dragan_loss = DRAGAN_COEF * tf.square(l2_gradients_minus_one)
+    tf.summary.scalar('dragan_loss', 0.5 * tf.reduce_mean(dragan_loss))
+    non_dragan_loss = (
+      tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.ones_like(true_discriminator_output_without_sigmoid), logits=true_discriminator_output_without_sigmoid) +
+      tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.zeros_like(generated_discriminator_output_without_sigmoid), logits=generated_discriminator_output_without_sigmoid))
+    tf.summary.scalar('non_dragan_loss', 0.5 * tf.reduce_mean(non_dragan_loss))
+    tf.summary.scalar('loss_component1', tf.reduce_mean(tf.nn.softplus(-true_discriminator_output_without_sigmoid)))
+    tf.summary.scalar('loss_component2', tf.reduce_mean(generated_discriminator_output_without_sigmoid +
+                                                        tf.nn.softplus(-generated_discriminator_output_without_sigmoid)))
 
-    discriminator_loss = 0.5 * tf.reduce_mean(
-        tf.nn.softplus(-true_discriminator_output_without_sigmoid) +
-            generated_discriminator_output_without_sigmoid +
-              tf.nn.softplus(-generated_discriminator_output_without_sigmoid) +
-              dragan_loss)
+    discriminator_loss = 0.5 * tf.reduce_mean(non_dragan_loss + dragan_loss)
 
     generator_loss = 0.5 * tf.reduce_mean(
         tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
@@ -403,6 +407,7 @@ def process(parsed_args):
   gradients, variables = zip(*grads_and_vars)
   gradients, original_norm = tf.clip_by_global_norm(
       gradients, DISCRIMINATOR_GRADIENT_CLIP_NORM)
+  tf.summary.scalar('original_gradient_norm', original_norm)
   grads_and_vars = list(zip(gradients, variables))
   discriminator_step = optimizer.apply_gradients(grads_and_vars)
 
