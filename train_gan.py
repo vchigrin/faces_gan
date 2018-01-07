@@ -8,11 +8,9 @@ import sys
 import tensorflow as tf
 from tensorflow.python.client import timeline
 
-#TARGET_WIDTH = 128
-#TARGET_HEIGH = 192
-TARGET_WIDTH = 64
-TARGET_HEIGHT = 64
-NUM_UPSCALING_BLOCKS = 2
+TARGET_WIDTH = 128
+TARGET_HEIGHT = 192
+NUM_UPSCALING_BLOCKS = 3
 GENERATOR_RES_BLOCK_NUM_CHANNELS = 64
 UPSCALING_BLOCK_NUM_CHANNELS = 256
 NUM_RES_BLOCKS = 16
@@ -174,13 +172,13 @@ class Generator(Network):
           num_units=res_block_width * res_block_height * GENERATOR_RES_BLOCK_NUM_CHANNELS)
       cur_layer_out = tf.reshape(
           dense_out,
-          shape=[-1, res_block_width, res_block_height, GENERATOR_RES_BLOCK_NUM_CHANNELS])
+          shape=[-1, res_block_height, res_block_width, GENERATOR_RES_BLOCK_NUM_CHANNELS])
       for i in xrange(NUM_RES_BLOCKS):
         with tf.variable_scope('Residual_' + str(i)):
           cur_layer_out = self._build_residual_block(
               cur_layer_out)
         assert(cur_layer_out.shape.as_list()[1:] ==
-            [res_block_width, res_block_height, GENERATOR_RES_BLOCK_NUM_CHANNELS])
+            [res_block_height, res_block_width, GENERATOR_RES_BLOCK_NUM_CHANNELS])
       expected_width = res_block_width
       expected_height = res_block_height
       for i in xrange(NUM_UPSCALING_BLOCKS):
@@ -190,7 +188,7 @@ class Generator(Network):
           expected_height *= 2
 
         assert(cur_layer_out.shape.as_list()[1:] ==
-            [expected_width, expected_height, UPSCALING_BLOCK_NUM_CHANNELS / 4])
+            [expected_height, expected_width, UPSCALING_BLOCK_NUM_CHANNELS / 4])
       return self._build_output_layer(cur_layer_out)
 
 

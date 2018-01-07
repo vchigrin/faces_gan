@@ -7,9 +7,8 @@ import sys
 import tensorflow as tf
 import tqdm
 
-# TODO:
-TARGET_WIDTH = 64
-TARGET_HEIGH = 64
+TARGET_WIDTH = 128
+TARGET_HEIGH = 192
 
 def get_src_file_paths(src_dir):
   for dirpath, _, filenames in os.walk(src_dir):
@@ -19,16 +18,11 @@ def get_src_file_paths(src_dir):
 
 
 def get_image_data_from_file(file_path):
-  raw_data = cv2.imread(file_path)
-  # TODO(vchigrin): Remove this after testing GAN training finishes.
-  raw_data = raw_data[:128, :]
-  resized = cv2.resize(
-      raw_data,
-      (TARGET_WIDTH, TARGET_HEIGH),
-      interpolation=cv2.INTER_CUBIC)
+  image_data = cv2.imread(file_path)
+  assert image_data.shape == (TARGET_HEIGH, TARGET_WIDTH, 3)
   # Swap  channnels in the way, preferred for TensorFlow
-  resized[:,:,0], resized[:,:,2] = resized[:,:,2], resized[:,:,0]
-  return resized
+  image_data[:,:,0], image_data[:,:,2] = image_data[:,:,2], image_data[:,:,0]
+  return image_data
 
 
 def process(cropper_images_dir, dest_file_name):
