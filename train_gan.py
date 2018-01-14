@@ -15,15 +15,37 @@ GENERATOR_RES_BLOCK_NUM_CHANNELS = 64
 UPSCALING_BLOCK_NUM_CHANNELS = 256
 NUM_RES_BLOCKS = 16
 
-DISCRIMINATOR_GRADIENT_CLIP_NORM = 5
+DISCRIMINATOR_GRADIENT_CLIP_NORM = 20
 
 NOISE_SIZE = 128
 TRUE_IMAGES_BATCH_SIZE = 64
 NOISE_BATCH_SIZE = TRUE_IMAGES_BATCH_SIZE
 NUM_EPOCHS = 100
 DRAGAN_COEF = 10
-MAX_ACCEPTABLE_DISCRIMINATOR_LOSS = 5
-MIN_DISCRIMINATOR_STEPS = 3
+
+# Seems, Discriminator net is not so stable as Generator (may be due to
+# absence of batch normalization layers). Sometimes it makes steps that
+# produce huge loss increase (in 1000 times and more). We want to avoid
+# training Generator on such bad Discriminator states. So, we introduce
+# special hack: we continuously compute running average of last values of
+# "accepted" Discriminator losses, and "accept" only states of Discriminator
+# that have losses not greater then some constant
+# (greater then one) times moving average.
+# Using just moving average seems too strict - we're afraid that threshold will
+# collapse almost to zero and we'll getting into infinite Discriminator
+# training (although, we should check wheter this is indeed tha case).
+
+# So, final algorithm is:
+# threshold = START_DISCRIMINATOR_LOSS_LIMIT
+# After each step of Discriminator, check loss,
+# if current_loss > threshold * DISCRIMINATOR_ALLOW_WAIT_INCREASE_RATIO:
+# then continue training Discriminator.
+# Else - update threshold
+# threshold = threshold * 0.9 + current_loss * 0.1
+
+# Stricter limit to force start with relatively good Discriminator
+START_DISCRIMINATOR_LOSS_LIMIT = 1.
+DISCRIMINATOR_ALLOW_WAIT_INCREASE_RATIO = 1.75
 
 GENERATOR_PARAMS = 'generator_params'
 DISCRIMINATOR_PARAMS = 'discriminator_params'
@@ -463,9 +485,12 @@ def process(parsed_args):
       tf.train.start_queue_runners(sess=session, coord=coordinator)
       sw = tf.summary.FileWriter('summary_dir', session.graph)
       discriminator_steps_count_ph = tf.placeholder(dtype=tf.int32)
-      discrimintato_steps_count_summary = tf.summary.scalar('discrimintato_steps_count', discriminator_steps_count_ph)
+      discriminator_steps_count_summary = tf.summary.scalar('discriminator_steps_count', discriminator_steps_count_ph)
+      discriminator_loss_threshold_ph = tf.placeholder(dtype=tf.float32)
+      discriminator_loss_threshold_summary = tf.summary.scalar('discriminator_loss_threshold', discriminator_loss_threshold_ph)
       try:
         counter_val = 0
+        discriminator_loss_threshold = START_DISCRIMINATOR_LOSS_LIMIT
         while not coordinator.should_stop():
           discrimintator_steps_count = 0
           while True:
@@ -476,9 +501,17 @@ def process(parsed_args):
                 parsed_args.dump_traces,
                 'Discriminator_{}_{}.json'.format(counter_val, discrimintator_steps_count))
             dl = session.run(discriminator_loss)
-            if dl < MAX_ACCEPTABLE_DISCRIMINATOR_LOSS and discrimintator_steps_count >= MIN_DISCRIMINATOR_STEPS:
+            if dl < discriminator_loss_threshold * DISCRIMINATOR_ALLOW_WAIT_INCREASE_RATIO:
+              new_threshold = discriminator_loss_threshold * 0.9 + 0.1 * dl
+              logging.info('Discriminator loss OK ({}) threshold update {} (used {}) => {}'.format(
+                dl,
+                discriminator_loss_threshold,
+                discriminator_loss_threshold * DISCRIMINATOR_ALLOW_WAIT_INCREASE_RATIO,
+                new_threshold))
+              discriminator_loss_threshold = new_threshold
               break  # Avoid training generator if Discriminator gets into unstable state and produces too big loses
-            logging.info('Discriminator done on step {}, run {} times, loss {}'.format(counter_val, discrimintator_steps_count, dl))
+            logging.info('Discriminator re-run on step {}, run {} times, loss {}, threshold {}'.format(
+                counter_val, discrimintator_steps_count, dl, discriminator_loss_threshold))
           session.run([next_step_noise, next_step_true_image])
           _, dl, gl, counter_val = run_with_trace_if_need(
               session,
@@ -490,8 +523,12 @@ def process(parsed_args):
                'Generator_{}.json'.format(counter_val))
           summary = session.run(merged_summaries)
           sw.add_summary(summary, counter_val)
-          summary = session.run(discrimintato_steps_count_summary, feed_dict={discriminator_steps_count_ph: discrimintator_steps_count})
+          summary = session.run(discriminator_steps_count_summary, feed_dict={discriminator_steps_count_ph: discrimintator_steps_count})
           sw.add_summary(summary, counter_val)
+
+          summary = session.run(discriminator_loss_threshold_summary, feed_dict={discriminator_loss_threshold_ph: discriminator_loss_threshold})
+          sw.add_summary(summary, counter_val)
+
           if parsed_args.show_fixed_noise_output:
             session.run(in_noise.assign(fixed_noise))
             sw.add_summary(session.run(fixed_noise_output), counter_val)
