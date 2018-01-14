@@ -21,7 +21,7 @@ def get_image_data_from_file(file_path):
   image_data = cv2.imread(file_path)
   assert image_data.shape == (TARGET_HEIGH, TARGET_WIDTH, 3)
   # Swap  channnels in the way, preferred for TensorFlow
-  image_data[:,:,0], image_data[:,:,2] = image_data[:,:,2], image_data[:,:,0]
+  image_data[:,:,0], image_data[:,:,2] = image_data[:,:,2].copy(), image_data[:,:,0].copy()
   return image_data
 
 
