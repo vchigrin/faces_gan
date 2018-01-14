@@ -173,12 +173,17 @@ class Generator(Network):
       cur_layer_out = tf.reshape(
           dense_out,
           shape=[-1, res_block_height, res_block_width, GENERATOR_RES_BLOCK_NUM_CHANNELS])
+      before_res_blocks_out = cur_layer_out
       for i in xrange(NUM_RES_BLOCKS):
         with tf.variable_scope('Residual_' + str(i)):
           cur_layer_out = self._build_residual_block(
               cur_layer_out)
         assert(cur_layer_out.shape.as_list()[1:] ==
             [res_block_height, res_block_width, GENERATOR_RES_BLOCK_NUM_CHANNELS])
+      with tf.variable_scope('Intermediade'):
+        cur_layer_out = self._make_batch_normalization_block(cur_layer_out)
+      cur_layer_out = tf.nn.leaky_relu(cur_layer_out)
+      cur_layer_out = cur_layer_out + before_res_blocks_out
       expected_width = res_block_width
       expected_height = res_block_height
       for i in xrange(NUM_UPSCALING_BLOCKS):
@@ -400,7 +405,13 @@ def process(parsed_args):
     generator_loss = 0.5 * tf.reduce_mean(
         tf.nn.softplus(-generated_discriminator_output_without_sigmoid))
 
-  optimizer = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5)
+  global_step_counter = tf.get_variable(
+      'global_step_couner', trainable=False, initializer=0)
+
+  learning_rate = tf.train.exponential_decay(learning_rate=0.0002, global_step=global_step_counter,
+                                             decay_steps=50000, decay_rate=0.5, staircase=True)
+
+  optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate, beta1=0.5)
   grads_and_vars = optimizer.compute_gradients(
       discriminator_loss, var_list=tf.get_collection(DISCRIMINATOR_PARAMS))
 
@@ -413,9 +424,6 @@ def process(parsed_args):
 
   generator_step = optimizer.minimize(
       generator_loss, var_list=tf.get_collection(GENERATOR_PARAMS))
-
-  global_step_counter = tf.get_variable(
-      'global_step_couner', trainable=False, initializer=0)
 
   tf.summary.scalar('discriminator_loss', discriminator_loss)
   tf.summary.scalar('generator_loss', generator_loss)
